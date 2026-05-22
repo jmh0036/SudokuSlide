@@ -170,17 +170,6 @@ sub generate {
     );
     my $solution_text = _render_solution($grid, \@h_wall, \@v_wall, $N);
 
-    if ($opts{verbose}) {
-        print "CELL PIECE MAP: \n";
-        for my $r (0 .. $N-1) {
-            for my $c (0 .. $N-1) {
-                print " $cell_piece[$r][$c]";
-            }
-            print "\n";
-        }
-        print "\n";
-    }
-
     return {
         grid          => $grid,
         tiling        => $tiling,

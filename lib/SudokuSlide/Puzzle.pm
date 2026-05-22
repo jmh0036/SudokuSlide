@@ -170,6 +170,17 @@ sub generate {
     );
     my $solution_text = _render_solution($grid, \@h_wall, \@v_wall, $N);
 
+    if ($opts{verbose}) {
+        print "CELL PIECE MAP: \n";
+        for my $r (0 .. $N-1) {
+            for my $c (0 .. $N-1) {
+                print " $cell_piece[$r][$c]";
+            }
+            print "\n";
+        }
+        print "\n";
+    }
+
     return {
         grid          => $grid,
         tiling        => $tiling,
@@ -321,7 +332,7 @@ sub _render_puzzle {
     $out .= "\nPIECES (place each into the grid — rotate in 90\xc2\xb0 steps as needed;\n";
     $out .= "        the values shown are fixed and must land in the correct cells):\n\n";
 
-    for my $id (sort { $a <=> $b } keys %$pieces_by_id) {
+    for my $id (keys %$pieces_by_id) {
         $out .= _render_piece($id, $pieces_by_id->{$id}, $grid, $W) . "\n";
     }
 

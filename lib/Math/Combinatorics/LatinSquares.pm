@@ -1,21 +1,17 @@
-package Math::Combinatorics::LatinSquares;
+use v5.40;
+use feature 'class';
+no warnings 'experimental';
 
-use strict;
-use warnings;
+class Math::Combinatorics::LatinSquares 0.05;
+
 use Algorithm::DLX;
-use List::Util qw(shuffle);
+use List::Util qw(shuffle min);
 use Carp       qw(croak);
-
-our $VERSION = '0.03';
 
 =head1 NAME
 
-Math::Combinatorics::LatinSquares - Generate random latin squares with simultaneous
-rectangular regional constraints
-
-=head1 VERSION
-
-Version 0.03
+Math::Combinatorics::LatinSquares - Latin squares with simultaneous rectangular
+regional constraints
 
 =head1 SYNOPSIS
 
@@ -23,229 +19,176 @@ Version 0.03
 
     my $ls = Math::Combinatorics::LatinSquares->new(regions => [[3, 3]]);
 
-    # One random solution (default)
-    my $grids = $ls->solve;
-    $ls->print_grid($grids->[0]);
-
-    # All solutions
-    my $grids = $ls->solve(number_of_solutions => undef);
-
-    # Exactly 5 solutions
-    my $grids = $ls->solve(number_of_solutions => 5);
-
-=head1 DESCRIPTION
-
-A B<latin square> is an NxN grid in which each of N symbols appears exactly
-once in every row and every column.
-
-A B<sudoku pair latin square> adds one or more I<regional> constraints: the NxN
-grid is partitioned into N non-overlapping regions of N cells each, and each
-region must also contain every symbol exactly once.
-
-This module focuses on B<rectangular regional tilings>: each region specification
-C<[R, C]> describes a uniform tiling of the NxN grid by RxC rectangles.  Multiple
-region specifications can be enforced I<simultaneously>.
-
-Rows and columns are I<not> assumed; specify C<[1, N]> and C<[N, 1]> explicitly
-if you want them.
-
-Solving uses a two-phase approach: a fast random pre-filler places values in
-some boxes before invoking L<Algorithm::DLX>, which dramatically reduces the
-DLX search space.
-
-=head1 METHODS
-
-=head2 new(%args)
-
-    my $ls = Math::Combinatorics::LatinSquares->new(regions => [[2, 3], [3, 2]]);
-
-Constructs a new solver object.  Arguments:
-
-=over 4
-
-=item regions
-
-Required.  An arrayref of C<[box_rows, box_cols]> pairs.  All pairs must have
-the same product R*C, which becomes N (the grid side length and symbol count).
-
-=back
-
-=cut
-
-sub new {
-    my ($class, %args) = @_;
-
-    croak "regions is required" unless exists $args{regions};
-    my $region_specs = $args{regions};
-    croak "regions must be a non-empty arrayref"
-        unless ref $region_specs eq 'ARRAY' && @$region_specs;
-
-    my $N;
-    my @regions;
-    for my $spec (@$region_specs) {
-        croak "each region spec must be an arrayref of two positive integers"
-            unless ref $spec eq 'ARRAY' && @$spec == 2
-                && $spec->[0] >= 1 && $spec->[1] >= 1;
-        my ($br, $bc) = @$spec;
-        my $prod = $br * $bc;
-        croak "region [$br, $bc]: product must be >= 2" if $prod < 2;
-        if (defined $N) {
-            croak "region [$br, $bc]: product $prod differs from $N "
-                . "(all regions must have the same product)"
-                unless $prod == $N;
-        } else {
-            $N = $prod;
-        }
-        croak "grid size $N must be divisible by box_rows $br" if $N % $br;
-        croak "grid size $N must be divisible by box_cols $bc" if $N % $bc;
-        push @regions, [$br, $bc];
-    }
-
-    my @region_maps = map { _build_region_map($N, $_->[0], $_->[1]) } @regions;
-
-    return bless {
-        N           => $N,
-        regions     => \@regions,
-        region_maps => \@region_maps,
-    }, $class;
-}
-
-=head2 n
-
-Returns N, the grid side length (and number of symbols).
-
-=cut
-
-sub n { $_[0]->{N} }
-
-=head2 regions
-
-Returns the arrayref of C<[box_rows, box_cols]> region specs.
-
-=cut
-
-sub regions { $_[0]->{regions} }
-
-=head2 region_maps
-
-Returns an arrayref of region maps (one per region spec).  Each map is a 2D
-arrayref C<$map->[$r][$c]> giving the box index (0..N-1) for cell (r, c).
-
-=cut
-
-sub region_maps { $_[0]->{region_maps} }
-
-=head2 solve(%opts)
-
-    my $grids = $ls->solve;                               # one random solution (default)
+    my $grids = $ls->solve;                               # one random solution
     my $grids = $ls->solve(number_of_solutions => 5);     # up to 5 solutions
     my $grids = $ls->solve(number_of_solutions => undef); # all solutions
 
-Uses a fast random pre-filler to seed the grid, then invokes
-L<Algorithm::DLX> to complete it.  Pre-filled cells are injected into the
-DLX matrix as the only candidate for that cell, so DLX is forced to accept
-them without any search on those cells, reducing the search space greatly.
+=head1 DESCRIPTION
 
-A pre-filled partial assignment that is individually consistent may still
-leave no completable solution (the randomly chosen boxes can paint DLX into
-a corner).  In that case the whole attempt — pre-fill and DLX — is retried
-with a fresh random assignment up to C<max_attempts> times.
+A B<latin square> is an NxN grid where each of N symbols appears exactly once
+in every row and every column.
+
+This module adds one or more I<rectangular regional> constraints: each region
+spec C<[R, C]> tiles the NxN grid with RxC rectangles, each of which must also
+contain every symbol exactly once. Multiple specs are enforced simultaneously.
+
+Row and column uniqueness are I<not> assumed; add C<[1, N]> and C<[N, 1]>
+explicitly if you want standard sudoku row/column constraints.
+
+=head1 CONSTRUCTOR
+
+=head2 new(regions => \@specs)
+
+C<@specs> is a list of C<[box_rows, box_cols]> pairs. Every pair must have the
+same product (= N). N must be at least 2.
+
+=cut
+
+field $regions     :param;
+field $_N;
+field $_region_maps;
+
+ADJUST {
+    croak "regions must be a non-empty arrayref"
+        unless ref $regions eq 'ARRAY' && @$regions;
+
+    my ($N, @validated);
+    for my $spec (@$regions) {
+        croak "each region spec must be an arrayref of two positive integers"
+            unless ref $spec eq 'ARRAY' && @$spec == 2
+                && $spec->[0] >= 1 && $spec->[1] >= 1;
+
+        my ($br, $bc) = @$spec;
+        my $prod = $br * $bc;
+        croak "region [$br,$bc]: product $prod must be >= 2" if $prod < 2;
+
+        if (defined $N) {
+            croak "region [$br,$bc]: product $prod != $N "
+                . "(all regions must have the same product N)"
+                unless $prod == $N;
+        }
+        else {
+            $N = $prod;
+        }
+
+        croak "grid size $N must be divisible by box_rows $br" if $N % $br;
+        croak "grid size $N must be divisible by box_cols $bc" if $N % $bc;
+        push @validated, [$br, $bc];
+    }
+
+    $_N           = $N;
+    $regions      = \@validated;
+    $_region_maps = [map { _build_region_map($N, $_->[0], $_->[1]) } @validated];
+}
+
+=head1 METHODS
+
+=head2 n
+
+Returns N, the grid side length.
+
+=cut
+
+method n() { $_N }
+
+=head2 regions
+
+Returns the validated arrayref of C<[box_rows, box_cols]> region specs.
+
+=cut
+
+method regions() { $regions }
+
+=head2 region_maps
+
+Returns an arrayref of region maps (one per spec). Each map is a 2D arrayref
+where C<$map->[$r][$c]> gives the 0-based box index for cell (r, c).
+
+=cut
+
+method region_maps() { $_region_maps }
+
+=head2 solve(%opts)
+
+Generate solutions using a random pre-fill followed by L<Algorithm::DLX>.
 
 Options:
 
 =over 4
 
-=item number_of_solutions
+=item C<number_of_solutions> — how many solutions to return (default: 1;
+C<undef> = return all solutions, which may be very many)
 
-How many solutions to return.  Defaults to C<1>.  Pass C<undef> for all.
+=item C<prefill_boxes> — number of boxes from the first region to pre-fill
+before handing off to DLX (default: floor(N/2); 0 disables pre-filling)
 
-=item prefill_boxes
-
-How many boxes (of the first region) to pre-fill before invoking DLX.
-Defaults to half of N (rounded down).  Set to 0 to disable pre-filling.
-
-=item max_attempts
-
-Maximum number of full solve attempts (prefill + DLX) before giving up and
-returning an empty arrayref.  Defaults to 200.
+=item C<max_attempts> — how many times to retry if a pre-fill leads to no
+DLX solution (default: 200)
 
 =back
 
-Returns an arrayref of grids (each a 2D arrayref where C<$grid->[$r][$c]> is
-a value 1..N), or an empty arrayref if no solution was found within
-C<max_attempts> tries.
+Returns an arrayref of 2D grid arrayrefs, where C<$grid->[$r][$c]> is the
+value (1..N) at cell (r, c).
+
+Returns an empty arrayref if no solution is found within C<max_attempts>.
 
 =cut
 
-sub solve {
-    my ($self, %opts) = @_;
-
+method solve (%opts) {
     my $num_solutions = exists $opts{number_of_solutions}
-        ? $opts{number_of_solutions}
-        : 1;
-
-    my $N           = $self->{N};
-    my @regions     = @{ $self->{regions} };
-    my @region_maps = @{ $self->{region_maps} };
-
+        ? $opts{number_of_solutions} : 1;
     my $prefill_boxes = exists $opts{prefill_boxes}
-        ? $opts{prefill_boxes}
-        : int($N / 2);
+        ? $opts{prefill_boxes} : int($_N / 2);
     my $max_attempts  = $opts{max_attempts} // 200;
 
-    for my $attempt (1 .. $max_attempts) {
+    # Clamp prefill_boxes to [0, N] to guard against oversized values
+    $prefill_boxes = min($prefill_boxes, $_N);
+    $prefill_boxes = 0 if $prefill_boxes < 0;
 
-        # --- Phase 1: random pre-fill ---
-        # Try to place values in $prefill_boxes random boxes of region 0,
-        # obeying all constraints.  Returns () if it gets stuck — just retry
-        # the whole attempt with a fresh shuffle.
+    for my $attempt (1 .. $max_attempts) {
         my %pinned;
         if ($prefill_boxes > 0) {
-            my @placements = _prefill($N, \@regions, \@region_maps, $prefill_boxes);
-            next unless @placements;   # stuck — try a completely fresh attempt
+            my @placements = _prefill($_N, $regions, $_region_maps, $prefill_boxes);
+            next unless @placements;
             $pinned{"$_->[0],$_->[1]"} = $_->[2] for @placements;
         }
 
-        # --- Phase 2: build and run DLX ---
-        # Pinned cells get only their one forced row; unpinned cells get all
-        # N candidates in shuffled order.  DLX trivially selects pinned cells
-        # at zero search cost and only needs to search the remaining cells.
         my $dlx = Algorithm::DLX->new();
         my %col;
 
-        for my $r (0 .. $N-1) {
-            for my $c (0 .. $N-1) {
+        for my $r (0 .. $_N-1) {
+            for my $c (0 .. $_N-1) {
                 $col{"cell_${r}_${c}"} = $dlx->add_column("cell_${r}_${c}");
             }
         }
-
-        for my $t (0 .. $#regions) {
-            for my $k (0 .. $N-1) {
-                for my $v (1 .. $N) {
+        for my $t (0 .. $#$regions) {
+            for my $k (0 .. $_N-1) {
+                for my $v (1 .. $_N) {
                     $col{"t${t}_box${k}_v${v}"} = $dlx->add_column("t${t}_box${k}_v${v}");
                 }
             }
         }
 
-        # Build candidate list.  Pinned cells get only their forced value;
-        # unpinned cells get all values in shuffled order.
+        # Pinned cells get exactly one candidate (their fixed value) so DLX
+        # accepts them at zero search cost; unpinned cells get shuffled candidates
+        # to produce different solutions on repeated calls.
         my @candidates;
-        for my $r (0 .. $N-1) {
-            for my $c (0 .. $N-1) {
-                my $key = "$r,$c";
-                if (exists $pinned{$key}) {
-                    push @candidates, [$r, $c, $pinned{$key}];
-                } else {
-                    push @candidates, map { [$r, $c, $_] } shuffle(1 .. $N);
+        for my $r (0 .. $_N-1) {
+            for my $c (0 .. $_N-1) {
+                if (exists $pinned{"$r,$c"}) {
+                    push @candidates, [$r, $c, $pinned{"$r,$c"}];
+                }
+                else {
+                    push @candidates, map { [$r, $c, $_] } shuffle(1 .. $_N);
                 }
             }
         }
 
         for my $p (@candidates) {
             my ($r, $c, $v) = @$p;
-            my @cols = ( $col{"cell_${r}_${c}"} );
-            for my $t (0 .. $#regions) {
-                my $k = $region_maps[$t][$r][$c];
+            my @cols = ($col{"cell_${r}_${c}"});
+            for my $t (0 .. $#$regions) {
+                my $k = $_region_maps->[$t][$r][$c];
                 push @cols, $col{"t${t}_box${k}_v${v}"};
             }
             $dlx->add_row("${r},${c},${v}", @cols);
@@ -254,136 +197,117 @@ sub solve {
         my %dlx_opts;
         $dlx_opts{number_of_solutions} = $num_solutions if defined $num_solutions;
         my $solutions = $dlx->solve(%dlx_opts);
-
-        # DLX found nothing for this prefill — try a fresh random assignment
         next unless $solutions && @$solutions;
 
-        my @grids;
-        for my $sol (@$solutions) {
+        return [map {
             my @grid;
-            for my $row_name (@$sol) {
-                my ($r, $c, $v) = split /,/, $row_name;
+            for my $row_label (@$_) {
+                my ($r, $c, $v) = split /,/, $row_label;
                 $grid[$r][$c] = $v;
             }
-            push @grids, \@grid;
-        }
-        return \@grids;
+            \@grid;
+        } @$solutions];
     }
 
-    return [];  # exhausted all attempts
+    return [];
 }
 
 =head2 print_grid($grid, %opts)
 
-    $ls->print_grid($grid);
-    $ls->print_grid($grid, fh => \*STDERR);
-
-Prints the solution grid to a filehandle (default: STDOUT).
+Print a completed grid to a filehandle (default: STDOUT), one row per line,
+values space-separated and right-justified.
 
 =cut
 
-sub print_grid {
-    my ($self, $grid, %opts) = @_;
+method print_grid ($grid, %opts) {
     my $fh = $opts{fh} // \*STDOUT;
-    my $N  = $self->{N};
-    my $w  = length($N);
-    for my $r (0 .. $N-1) {
-        print $fh join(' ', map { sprintf("%${w}d", $grid->[$r][$_]) } 0 .. $N-1), "\n";
+    my $w  = length($_N);
+    for my $r (0 .. $_N-1) {
+        say $fh join(' ', map { sprintf("%${w}d", $grid->[$r][$_]) } 0 .. $_N-1);
     }
 }
 
-=head2 print_region_map($tiling_index, %opts)
+=head2 print_region_map($t, %opts)
 
-    $ls->print_region_map(0);
-    $ls->print_region_map(1, fh => \*STDERR);
-
-Prints the box map for the given tiling index using letter labels.
+Print the box-assignment map for region index C<$t> to a filehandle (default:
+STDOUT). Boxes are labelled A-Z, a-z, 0-9 (up to 62 boxes).
 
 =cut
 
-sub print_region_map {
-    my ($self, $t, %opts) = @_;
-    my $fh  = $opts{fh} // \*STDOUT;
-    my $N   = $self->{N};
-    my $map = $self->{region_maps}[$t];
+method print_region_map ($t, %opts) {
+    my $fh     = $opts{fh} // \*STDOUT;
+    my $map    = $_region_maps->[$t];
     my @labels = ('A'..'Z', 'a'..'z', '0'..'9');
-    for my $r (0 .. $N-1) {
-        print $fh join(' ', map { $labels[$map->[$r][$_]] // '?' } 0 .. $N-1), "\n";
+    for my $r (0 .. $_N-1) {
+        say $fh join(' ', map { $labels[$map->[$r][$_]] // '?' } 0 .. $_N-1);
     }
 }
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
+# ── Private helpers ───────────────────────────────────────────────────────────
+#
+# All private subs use old-style @_ unpacking (no sub-signature syntax).
+# This avoids the `map { BLOCK } @$ref` parser ambiguity that affects Perl
+# with `use feature 'signatures'` in scope through at least Perl 5.41.
 
-# Attempt to pre-fill $num_boxes boxes of region 0, obeying all constraints.
-# Returns a list of [r, c, v] triples on success, or empty list on failure.
+# Build the box-index map for a single region spec.
+# box_index = floor(r/br) * boxes_across + floor(c/bc)
+sub _build_region_map {
+    my ($N, $br, $bc) = @_;
+    my $boxes_across = $N / $bc;
+    my @map;
+    for my $r (0 .. $N-1) {
+        for my $c (0 .. $N-1) {
+            $map[$r][$c] = int($r/$br) * $boxes_across + int($c/$bc);
+        }
+    }
+    return \@map;
+}
+
+# Randomly pre-fill $num_boxes boxes of the first region with valid values,
+# checking all regional constraints simultaneously.
+# Returns a list of [$r, $c, $value] triples, or an empty list on failure.
 sub _prefill {
     my ($N, $regions, $region_maps, $num_boxes) = @_;
 
     my $primary_map = $region_maps->[0];
-
-    # Gather cells per box of the primary region
     my @box_cells;
     for my $r (0 .. $N-1) {
         for my $c (0 .. $N-1) {
-            push @{ $box_cells[ $primary_map->[$r][$c] ] }, [$r, $c];
+            push @{ $box_cells[$primary_map->[$r][$c]] }, [$r, $c];
         }
     }
 
-    # Pick $num_boxes boxes at random to fill
-    my @box_order = (shuffle 0 .. $N-1)[ 0 .. $num_boxes-1 ];
+    # num_boxes is already clamped to [0, N] by the caller
+    my @box_order = (shuffle 0 .. $N-1)[0 .. $num_boxes-1];
 
-    # Shared constraint tracking across boxes:
-    #   $col_used[$c]{$v}         — value $v already placed in column $c
-    #   $box_used[$t][$k]{$v}     — value $v already placed in tiling $t, box $k
-    my @col_used;
-    my @box_used;
-    my @all_placements;
-
+    my (@col_used, @box_used, @all_placements);
     for my $k (@box_order) {
-        my @cells = @{ $box_cells[$k] };
-        my @vals  = shuffle 1 .. $N;
+        my @cells    = @{ $box_cells[$k] };
+        my @vals     = shuffle 1 .. $N;
         my @assigned;
-
-        my $ok = _fill_box(\@cells, \@vals, 0, \@assigned,
-                           \@col_used, \@box_used,
-                           $regions, $region_maps);
-        return () unless $ok;   # signal failure; caller will retry
-
+        return () unless _fill_box(\@cells, \@vals, 0, \@assigned,
+                                   \@col_used, \@box_used,
+                                   $regions, $region_maps);
         push @all_placements, @assigned;
     }
-
     return @all_placements;
 }
 
-# Recursive backtracker for a single box.
+# Recursive backtracker: assign values to cells[idx..end] using values from
+# @vals, respecting column-uniqueness and all regional constraints.
 sub _fill_box {
-    my ($cells, $vals, $idx, $assigned,
-        $col_used, $box_used,
-        $regions, $region_maps) = @_;
-
+    my ($cells, $vals, $idx, $assigned, $col_used, $box_used, $regions, $region_maps) = @_;
     return 1 if $idx == scalar @$cells;
 
     my ($r, $c) = @{ $cells->[$idx] };
 
     for my $vi (0 .. $#$vals) {
         my $v = $vals->[$vi];
-
         next if $col_used->[$c]{$v};
+        next if grep { $box_used->[$_][$region_maps->[$_][$r][$c]]{$v} } 0 .. $#$regions;
 
-        my $conflict = 0;
-        for my $t (0 .. $#$regions) {
-            if ($box_used->[$t][ $region_maps->[$t][$r][$c] ]{$v}) {
-                $conflict = 1;
-                last;
-            }
-        }
-        next if $conflict;
-
-        # Place
         $col_used->[$c]{$v} = 1;
-        $box_used->[$_][ $region_maps->[$_][$r][$c] ]{$v} = 1 for 0 .. $#$regions;
+        $box_used->[$_][$region_maps->[$_][$r][$c]]{$v} = 1 for 0 .. $#$regions;
         push @$assigned, [$r, $c, $v];
 
         my @rest = (@{$vals}[0..$vi-1], @{$vals}[$vi+1..$#$vals]);
@@ -392,73 +316,34 @@ sub _fill_box {
             return 1;
         }
 
-        # Undo
         pop @$assigned;
         $col_used->[$c]{$v} = 0;
-        $box_used->[$_][ $region_maps->[$_][$r][$c] ]{$v} = 0 for 0 .. $#$regions;
+        $box_used->[$_][$region_maps->[$_][$r][$c]]{$v} = 0 for 0 .. $#$regions;
     }
-
     return 0;
-}
-
-sub _build_region_map {
-    my ($N, $br, $bc) = @_;
-    my $boxes_across = $N / $bc;
-    my @map;
-    for my $r (0 .. $N-1) {
-        for my $c (0 .. $N-1) {
-            $map[$r][$c] = int($r / $br) * $boxes_across + int($c / $bc);
-        }
-    }
-    return \@map;
 }
 
 1;
 
 __END__
 
-=head1 REGION SPECIFICATIONS
-
-Each region spec C<[R, C]> describes a uniform tiling of the NxN grid by RxC
-rectangles.  N must equal R*C.
-
-Rows and columns are just special cases:
-
-  [1, N]  — each row is a single 1xN strip (row latin constraint)
-  [N, 1]  — each column is a single Nx1 strip (column latin constraint)
-
 =head1 ALGORITHM
-
-Solving is a two-phase process:
 
 =over 4
 
-=item 1. B<Pre-fill>
+=item 1. B<Pre-fill> — a lightweight random backtracker fills C<prefill_boxes>
+randomly chosen boxes from the first region, checking all constraints
+simultaneously. This seeds the search space cheaply.
 
-A lightweight random backtracker fills C<prefill_boxes> random boxes of the
-first region (default: N/2), checking all regional constraints simultaneously.
-If it gets stuck (a box has no valid placement given the earlier choices) it
-signals failure and the whole attempt is retried from scratch.
+=item 2. B<DLX exact cover> — pinned cells (from pre-fill) are given only one
+candidate row so Dancing Links accepts them at zero search cost. Unpinned cells
+get shuffled value candidates, producing different solutions on repeated calls.
 
-=item 2. B<DLX exact cover>
-
-Pinned cells are injected into the DLX matrix with only one candidate row
-(their forced value), so DLX trivially selects them at zero search cost.
-Unpinned cells get the usual shuffled set of N candidates.  DLX then only
-needs to search the remaining free cells.
-
-=item 3. B<Retry loop>
-
-If DLX finds no solution for the given prefill (the randomly chosen boxes
-were individually consistent but globally unsatisfiable), the whole attempt —
-prefill and DLX — is retried with a fresh random assignment.  Up to
-C<max_attempts> tries are made (default: 200) before giving up.
+=item 3. B<Retry loop> — if DLX finds no solution for a given pre-fill,
+the whole attempt retries (up to C<max_attempts> times). Failure is extremely
+rare for well-constrained problems.
 
 =back
-
-=head1 DEPENDENCIES
-
-L<Algorithm::DLX>, L<List::Util>
 
 =head1 AUTHOR
 

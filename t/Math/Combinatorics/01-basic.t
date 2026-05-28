@@ -57,7 +57,7 @@ sub run_bin {
 
 subtest 'constructor validation' => sub {
     eval { Math::Combinatorics::LatinSquares->new(regions => [[2, 3], [2, 2]]) };
-    like($@, qr/differ/, 'croaks on mismatched products');
+    like($@, qr/all regions must have the same product N/, 'croaks on mismatched products');
 
     my $ls = Math::Combinatorics::LatinSquares->new(regions => [[2, 2]]);
     is($ls->n, 4, 'N=4 for 2x2 region');
@@ -151,46 +151,5 @@ subtest 'randomness: 20 calls give multiple distinct grids' => sub {
     }
     cmp_ok(scalar keys %seen, '>', 1, 'got more than one distinct solution in 20 tries');
 };
-
-# ---------------------------------------------------------------------------
-# Binary integration tests — run the actual script in a loop
-# ---------------------------------------------------------------------------
-
-SKIP: {
-    skip "binary not found at $bin", 2 unless -f $bin;
-
-    subtest 'binary: 6x6 pair produces valid output' => sub {
-        my $found = 0;
-        for my $attempt (1 .. 200) {
-            my ($ok, @lines) = run_bin('--region 1 6 --region 6 1 --region 2 3 --region 3 2');
-            next unless $ok && @lines == 6;
-
-            # Parse the 6 output lines into a grid
-            my @grid = map { [ split ' ', $_ ] } @lines;
-            my $ls   = Math::Combinatorics::LatinSquares->new(
-                regions => [[1,6],[6,1],[2,3],[3,2]]
-            );
-            if (verify_grid($ls, \@grid)) {
-                $found = 1;
-                last;
-            }
-        }
-        ok($found, 'binary produced a valid 6x6 sudoku pair solution within 200 attempts');
-    };
-
-    subtest 'binary: --count 3 returns exactly 3 solutions' => sub {
-        my $found = 0;
-        for my $attempt (1 .. 200) {
-            my ($ok, @lines) = run_bin('--region 1 6 --region 6 1 --region 2 3 --region 3 2 --count 3');
-            # Grid data lines contain only digits and spaces; header/blank lines don't
-            my @data_lines = grep { /^\s*[\d ]+\s*$/ } @lines;
-            if ($ok && @data_lines == 18) {
-                $found = 1;
-                last;
-            }
-        }
-        ok($found, 'binary produced 3 solutions (18 grid data lines) within 200 attempts');
-    };
-}
 
 done_testing;

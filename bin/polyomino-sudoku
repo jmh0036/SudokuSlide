@@ -1,12 +1,11 @@
 #!/usr/bin/env perl
 
-use strict;
-use warnings;
+use v5.40;
 use FindBin qw($Bin);
 use lib "$Bin/../lib";
 
 use SudokuSlide::Puzzle;
-use Getopt::Long qw(:config pass_through);
+use Getopt::Long;
 use Pod::Usage;
 
 =head1 NAME
@@ -15,27 +14,28 @@ polyomino-sudoku - Generate a polyomino-tiled latin-square puzzle
 
 =head1 SYNOPSIS
 
-    polyomino-sudoku --region R C [--region R C ...] (--size K | --pieces S1,S2,...) [options]
+    polyomino-sudoku --region R C [--region R C ...] \
+                     (--size K | --pieces S1,S2,... | --must S1,S2 --fill K) \
+                     [--answer] [--verbose] [--no-random] [--help]
 
 =head1 DESCRIPTION
 
-Generates a puzzle combining two independent tools:
+Generates a SudokuSlide puzzle combining two independent tools:
 
 =over 4
 
 =item 1. B<A Quasi Factor Pair Latin Square> — an NxN grid satisfying all
-specified regional constraints (via C<--region>).
+specified regional constraints.
 
-=item 2. B<A polyomino tiling> of the same NxN grid (via C<--size> or C<--pieces>).
+=item 2. B<A polyomino tiling> of the same NxN grid.
 
 =back
 
-The puzzle output shows the empty grid with numbered regions and the set of
-polyomino pieces outside the grid. The goal is to place every piece back into
-its matching numbered region, obeying the latin-square rules.
-Pieces may be rotated in 90-degree increments before placement.
+The puzzle output shows an empty grid and a catalogue of polyomino pieces.
+The goal is to place every piece into the grid (rotating in 90-degree
+increments as needed), obeying the latin-square constraints.
 
-N is determined by the product R*C of any --region pair (all must agree).
+N is the product R*C of any C<--region> pair (all pairs must agree on N).
 
 =head1 OPTIONS
 
@@ -43,79 +43,80 @@ N is determined by the product R*C of any --region pair (all must agree).
 
 =item B<--region R C>
 
-A regional constraint for the latin square: the NxN grid is partitioned into
-RxC rectangles, each of which must contain every value 1..N exactly once.
-Repeat for multiple simultaneous constraints.
-To enforce standard row/column uniqueness, add C<--region 1 N> and C<--region N 1>.
+A regional constraint: the NxN grid is partitioned into RxC rectangles, each
+containing every value 1..N exactly once. Repeat for multiple simultaneous
+constraints.
 
-Example (classic 9x9 Sudoku regions):
+To enforce standard row/column uniqueness, add C<--region 1 N> and
+C<--region N 1>.
+
+Example (classic 9x9 Sudoku):
     --region 1 9 --region 9 1 --region 3 3
 
 =item B<--size K>
 
-Tile the grid uniformly with K-ominoes. K must divide N*N.
+Tile the grid uniformly with K-ominoes (K must divide N²).
 
 =item B<--pieces S1,S2,...>
 
-Tile the grid with an exact multiset of piece sizes (comma-separated).
-The sizes must sum to N*N.
+Tile with an exact multiset of piece sizes (comma-separated integers summing
+to N²).
 
 =item B<--must S1,S2 --fill K>
 
-Include at least one piece of each size in --must, then pad with K-ominoes.
-(Mirrors the polyomino_partition --must/--fill interface.)
+Include at least one piece of each size listed in C<--must>, then fill the
+remainder with K-ominoes. C<--must> and C<--fill> must be used together.
+
+=item B<--answer>
+
+Also print the completed answer grid after the puzzle, with piece borders
+overlaid on the region borders.
 
 =item B<--random> (default: on)
 
-Use random solutions for both the latin square and the polyomino tiling.
-Pass C<--no-random> for deterministic (first) solutions.
-
-=item B<--solution>
-
-Also print the solution grid after the puzzle.
+Use random solutions. Pass C<--no-random> for the deterministic (first)
+solution — useful for testing or reproducibility.
 
 =item B<--verbose>
 
-Print extra information: region box maps, piece count summary.
+Print region box maps and a piece count summary before the puzzle.
 
 =item B<--help>
 
-Show this help message.
+Show this help message and exit.
 
 =back
 
 =head1 EXAMPLES
 
-    # 9x9 Sudoku regions, 3-omino tiling
+    # 9x9 Sudoku regions, triomino tiling
     polyomino-sudoku --region 1 9 --region 9 1 --region 3 3 --size 3
 
     # 6x6 pair latin square, mixed 2- and 3-ominoes
     polyomino-sudoku --region 1 6 --region 6 1 --region 2 3 --region 3 2 \
                      --pieces 2,2,2,3,3,3,3,3,3,3,3
 
-    # 4x4, just 2x2 boxes, dominoes — show solution too
-    polyomino-sudoku --region 2 2 --size 2 --solution
+    # 4x4, 2x2 boxes, dominoes — show the answer too
+    polyomino-sudoku --region 2 2 --size 2 --answer
 
-    # 9x9, include at least one pentomino and one tetromino, fill with triominoes
+    # 9x9, at least one pentomino and tetromino, fill with triominoes
     polyomino-sudoku --region 1 9 --region 9 1 --region 3 3 \
                      --must 5,4 --fill 3
 
-    # Deterministic first solution
+    # Deterministic first solution (good for regression testing)
     polyomino-sudoku --region 3 3 --size 3 --no-random
+
+    # 12x12 with verbose region maps
+    polyomino-sudoku --region 1 12 --region 12 1 --region 2 6 --region 6 2 \
+                     --region 3 4 --size 6 --verbose
 
 =cut
 
-# ── Option parsing ──────────────────────────────────────────────────────────
-
-my @region_args;
-my $size_k;
-my $pieces_str;
-my $must_str;
-my $fill_k;
-my $random    = 1;
-my $solution  = 0;
-my $verbose   = 0;
-my $help      = 0;
+my (@region_args, $size_k, $pieces_str, $must_str, $fill_k);
+my $random  = 1;
+my $answer  = 0;
+my $verbose = 0;
+my $help    = 0;
 
 GetOptions(
     'region=i{2}' => \@region_args,
@@ -124,7 +125,7 @@ GetOptions(
     'must=s'      => \$must_str,
     'fill=i'      => \$fill_k,
     'random!'     => \$random,
-    'solution'    => \$solution,
+    'answer'      => \$answer,
     'verbose'     => \$verbose,
     'help|h'      => \$help,
 ) or pod2usage(2);
@@ -134,80 +135,87 @@ pod2usage(-exitval => 0, -verbose => 2) if $help;
 pod2usage(-message => "At least one --region R C is required.\n", -exitval => 2)
     unless @region_args >= 2;
 
-pod2usage(-message => "Specify exactly one of --size, --pieces, or --must/--fill.\n", -exitval => 2)
-    unless defined $size_k || defined $pieces_str || (defined $must_str && defined $fill_k);
+my $has_size   = defined $size_k;
+my $has_pieces = defined $pieces_str;
+my $has_must   = defined $must_str;
+my $has_fill   = defined $fill_k;
 
-if (defined $must_str || defined $fill_k) {
+pod2usage(-exitval => 2,
+    -message => "Specify exactly one of --size, --pieces, or --must/--fill.\n")
+    unless $has_size || $has_pieces || ($has_must && $has_fill);
+
+if ($has_must || $has_fill) {
     pod2usage(-message => "--must and --fill must be used together.\n", -exitval => 2)
-        unless defined $must_str && defined $fill_k;
-    pod2usage(-message => "Cannot use --must/--fill together with --size or --pieces.\n", -exitval => 2)
-        if defined $size_k || defined $pieces_str;
+        unless $has_must && $has_fill;
+    pod2usage(-message => "Cannot combine --must/--fill with --size or --pieces.\n",
+              -exitval => 2)
+        if $has_size || $has_pieces;
 }
 
-# ── Parse regions ───────────────────────────────────────────────────────────
+# ── Parse --region pairs ──────────────────────────────────────────────────
 
 my @regions;
-while (@region_args) {
-    push @regions, [ splice(@region_args, 0, 2) ];
-}
+push @regions, [splice @region_args, 0, 2] while @region_args;
 
-# Determine N
 my $N = $regions[0][0] * $regions[0][1];
 
-# ── Resolve piece list ──────────────────────────────────────────────────────
+# ── Resolve piece list ────────────────────────────────────────────────────
 
 my @pieces;
-if (defined $must_str && defined $fill_k) {
-    my @must = split /,/, $must_str;
+
+if ($has_must && $has_fill) {
     require Polyomino::Tiler;
-    my $suggested = Polyomino::Tiler->suggest_pieces(
-        n    => $N,
-        m    => $N,
-        must => \@must,
-        fill => $fill_k,
-    );
-    @pieces = @$suggested;
-    if ($verbose) {
-        print "Using pieces (from --must/--fill): [" . join(', ', @pieces) . "]\n\n";
-    } else {
-        print "Pieces: [" . join(', ', @pieces) . "]\n\n";
+    my @must      = split /,/, $must_str;
+    my $suggested = eval {
+        Polyomino::Tiler->suggest_pieces(n => $N, m => $N,
+                                         must => \@must, fill => $fill_k)
+    };
+    if ($@) {
+        (my $err = $@) =~ s/ at .+ line \d+.*//s;
+        die "Error: $err\n";
     }
-} elsif (defined $pieces_str) {
+    @pieces = @$suggested;
+    my $label = $verbose ? "Using pieces (from --must/--fill)" : "Pieces";
+    say "$label: [" . join(', ', @pieces) . "]";
+    say '';
+}
+elsif ($has_pieces) {
     @pieces = split /,/, $pieces_str;
-} else {
-    # --size: build uniform list
-    die "--size $size_k must divide N*N = $N*$N = " . ($N*$N) . "\n"
-        if ($N * $N) % $size_k != 0;
+}
+else {
+    pod2usage(
+        -message => "--size $size_k must divide N*N = ${N}x${N} = " . ($N*$N) . "\n",
+        -exitval => 2,
+    ) if ($N * $N) % $size_k != 0;
     @pieces = ($size_k) x (($N * $N) / $size_k);
 }
 
-# ── Print header ────────────────────────────────────────────────────────────
+# ── Print header ──────────────────────────────────────────────────────────
 
 my %size_count;
 $size_count{$_}++ for @pieces;
-my $piece_summary = join(', ',
+my $piece_summary = join ', ',
     map { "$size_count{$_}x ${_}-omino" }
-    sort { $a <=> $b } keys %size_count);
+    sort { $a <=> $b } keys %size_count;
 
 printf "Grid   : %dx%d\n", $N, $N;
-printf "Regions: %s\n", join(', ', map { "[$_->[0]x$_->[1]]" } @regions);
-printf "Pieces : %s\n", $piece_summary;
-printf "Mode   : %s\n\n", $random ? "random" : "deterministic";
+printf "Regions: %s\n",    join(', ', map { "[$_->[0]x$_->[1]]" } @regions);
+printf "Pieces : %s\n",    $piece_summary;
+printf "Mode   : %s\n\n",  $random ? 'random' : 'deterministic';
 
-# ── Optionally print region maps ─────────────────────────────────────────────
+# ── Optionally print region maps ──────────────────────────────────────────
 
 if ($verbose) {
     require Math::Combinatorics::LatinSquares;
     my $ls_info = Math::Combinatorics::LatinSquares->new(regions => \@regions);
     for my $t (0 .. $#regions) {
-        my ($br, $bc) = @{$regions[$t]};
-        printf "=== Region %d: %dx%d boxes ===\n", $t, $br, $bc;
+        printf "=== Region %d: %dx%d boxes ===\n", $t, @{$regions[$t]};
         $ls_info->print_region_map($t);
-        print "\n";
+        say '';
     }
 }
 
-# ── Generate puzzle ──────────────────────────────────────────────────────────
+# ── Generate puzzle ───────────────────────────────────────────────────────
 
 my $puzzle = SudokuSlide::Puzzle->new(
     regions => \@regions,
@@ -222,9 +230,5 @@ if ($@) {
 }
 
 print $result->{puzzle_text};
-
-if ($solution) {
-    print $result->{solution_text};
-}
-
-print "Done.\n";
+print $result->{answer_text} if $answer;
+say 'Done.';

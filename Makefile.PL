@@ -3,16 +3,17 @@ use warnings;
 use ExtUtils::MakeMaker;
 
 WriteMakefile(
-    NAME             => 'Polyomino::Sudoku',
+    NAME             => 'SudokuSlide',
     AUTHOR           => 'James Hammer',
-    VERSION          => '0.01',
+    VERSION          => '0.05',
     ABSTRACT         => 'Polyomino-tiled Quasi Factor Pair Latin Square puzzle generator',
     LICENSE          => 'perl_5',
-    MIN_PERL_VERSION => '5.010',
+    MIN_PERL_VERSION => 'v5.40.0',
     EXE_FILES        => ['bin/polyomino-sudoku'],
     PREREQ_PM        => {
         'Algorithm::DLX' => '0.03',
         'List::Util'     => '1.33',
+        'Scalar::Util'   => '1.40',
         'Getopt::Long'   => '2.45',
         'Pod::Usage'     => '1.69',
         'Carp'           => 0,
@@ -23,13 +24,13 @@ WriteMakefile(
     },
     META_MERGE => {
         'meta-spec' => { version => 2 },
-        provides    => {
-            'SudokuSlide::Puzzle'           => { file => 'lib/Polyomino/Sudoku/Puzzle.pm',          version => '0.01' },
-            'Polyomino::Tiler'                    => { file => 'lib/Polyomino/Tiler.pm',                   version => '0.03' },
-            'Polyomino::Renderer'                 => { file => 'lib/Polyomino/Renderer.pm',                version => '0.02' },
-            'Math::Combinatorics::LatinSquares'   => { file => 'lib/Math/Combinatorics/LatinSquares.pm',   version => '0.03' },
+        provides => {
+            'SudokuSlide::Puzzle'               => { file => 'lib/SudokuSlide/Puzzle.pm',              version => '0.05' },
+            'Polyomino::Tiler'                  => { file => 'lib/Polyomino/Tiler.pm',                 version => '0.05' },
+            'Polyomino::Renderer'               => { file => 'lib/Polyomino/Renderer.pm',              version => '0.04' },
+            'Math::Combinatorics::LatinSquares' => { file => 'lib/Math/Combinatorics/LatinSquares.pm', version => '0.05' },
         },
     },
     dist  => { COMPRESS => 'gzip -9f', SUFFIX => 'gz' },
-    clean => { FILES => 'PolyominoSudoku-*' },
+    clean => { FILES    => 'SudokuSlide-*' },
 );

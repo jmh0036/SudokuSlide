@@ -228,7 +228,6 @@ completed grid.
 lib/
   Math/Combinatorics/LatinSquares.pm   — latin square generator with regional constraints
   Polyomino/Tiler.pm                   — polyomino tiling engine (Dancing Links)
-  Polyomino/Renderer.pm                — ASCII renderer for tiling solutions
   SudokuSlide/Puzzle.pm                — puzzle assembly and rendering
 bin/
   polyomino-sudoku                     — CLI entry point
@@ -236,7 +235,6 @@ t/
   Math/Combinatorics/01-basic.t        — LatinSquares tests
   Polyomino/01_polyominoes.t           — polyomino generation tests
   Polyomino/02_solver.t                — tiling solver tests
-  Polyomino/03_renderer.t              — renderer tests
   Polyomino/04_mixed.t                 — mixed piece size tests
   Polyomino/TestHelper.pm              — shared test utilities
   SudokuSlide/01-puzzle.t              — full puzzle integration tests
